@@ -1,16 +1,13 @@
 import os
 import urllib.request
 import ssl
-from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
-import streamlit as st
-from pilmoji import Pilmoji 
 
-# Odblokowanie pobierania czcionek w środowisku sieciowym
+# Odblokowanie pobierania czcionek na systemach macOS
 ssl._create_default_https_context = ssl._create_unverified_context
 
 # ==========================================
-# KONFIGURACJA I INTELIGENTNE FUNKCJE
+# KONFIGURACJA I POBIERANIE CZCIONEK
 # ==========================================
 def pobierz_czcionki():
     czcionki = {
@@ -20,30 +17,19 @@ def pobierz_czcionki():
     for nazwa, url in czcionki.items():
         if not os.path.exists(nazwa):
             try:
+                print(f"Pobieram brakującą czcionkę: {nazwa}...")
                 urllib.request.urlretrieve(url, nazwa)
-            except Exception:
-                pass
-
-def wyciagnij_dominujacy_kolor(obrazek):
-    """Inteligentnie pobiera najpopularniejszy kolor z wgranej okładki."""
-    # Konwertujemy na format z limitowaną paletą (np. do 10 bazowych kolorów)
-    # To sprawia, że ignorujemy pojedyncze piksele, a wyciągamy spójną "masę"
-    img = obrazek.convert("P", palette=Image.ADAPTIVE, colors=10)
-    img = img.convert("RGB")
-    
-    # Pobieramy listę wszystkich kolorów i sortujemy
-    colors = img.getcolors(100000)
-    najczestszy = max(colors, key=lambda item: item[0])[1]
-    
-    # Konwertujemy RGB na format HEX (np. #A1B2C3), którego wymaga Streamlit
-    return '#{:02x}{:02x}{:02x}'.format(najczestszy[0], najczestszy[1], najczestszy[2]).upper()
+            except Exception as e:
+                print(f"Błąd pobierania {nazwa}: {e}")
 
 def generuj_cien(obrazek, rozrost=50, rozmycie=35, offset_y=15):
+    """Generuje realistyczny, bardzo miękki cień pod okładką."""
     szerokosc = obrazek.width + rozrost * 2
     wysokosc = obrazek.height + rozrost * 2
     cien = Image.new('RGBA', (szerokosc, wysokosc), (0, 0, 0, 0))
     
     draw = ImageDraw.Draw(cien)
+    # Rysujemy delikatnie półprzezroczysty, mniejszy prostokąt, żeby cień nie był za mocny
     draw.rectangle(
         [rozrost + 10, rozrost + offset_y, rozrost + obrazek.width - 10, rozrost + obrazek.height + offset_y],
         fill=(0, 0, 0, 60)
@@ -53,16 +39,18 @@ def generuj_cien(obrazek, rozrost=50, rozmycie=35, offset_y=15):
     return cien
 
 # ==========================================
-# GŁÓWNY SILNIK GENERUJĄCY COVER
+# GŁÓWNY GENERATOR
 # ==========================================
 def generuj_cover_fb(okladka_plik, miesiac_rok, styl_tla, kolor_tla="#EACDC7"):
     SZEROKOSC, WYSOKOSC = 1640, 624 
     
+    # 1. PRZYGOTOWANIE TŁA
     okladka_img = Image.open(okladka_plik).convert("RGBA")
     
     if styl_tla == "Jednolity":
         tlo = Image.new('RGB', (SZEROKOSC, WYSOKOSC), kolor_tla)
     else:
+        # Bardziej rozmyte i jaśniejsze tło (jak na Twoim wzorze)
         wspolczynnik = SZEROKOSC / okladka_img.width
         nowa_wys = int(okladka_img.height * wspolczynnik)
         tlo_rozmyte = okladka_img.resize((SZEROKOSC, nowa_wys), Image.Resampling.LANCZOS)
@@ -74,6 +62,7 @@ def generuj_cover_fb(okladka_plik, miesiac_rok, styl_tla, kolor_tla="#EACDC7"):
         biala_nakladka = Image.new('RGBA', (SZEROKOSC, WYSOKOSC), (255, 255, 255, 180))
         tlo = Image.alpha_composite(tlo_rozmyte.convert('RGBA'), biala_nakladka).convert('RGB')
 
+    # 2. PRZYGOTOWANIE OKŁADKI (Większa okładka, bliższa krawędzi)
     docelowa_wys_okladki = 540
     proporcja = docelowa_wys_okladki / okladka_img.height
     docelowa_szer_okladki = int(okladka_img.width * proporcja)
@@ -81,17 +70,20 @@ def generuj_cover_fb(okladka_plik, miesiac_rok, styl_tla, kolor_tla="#EACDC7"):
     
     okladka_z_cieniem = generuj_cien(okladka_zeskalowana)
     
-    margines_prawa = 110 
+    margines_prawa = 110 # Odległość okładki od prawej krawędzi covera
     okladka_x = SZEROKOSC - docelowa_szer_okladki - margines_prawa
-    wklej_x = okladka_x - 50 
+    wklej_x = okladka_x - 50 # korekta o rozrost cienia
     wklej_y = ((WYSOKOSC - docelowa_wys_okladki) // 2) - 50
     
-    linia_podzialu_x = okladka_x - 60 
+    # 3. WGRYWANIE LOGO (I WYRÓWNANIE)
+    draw = ImageDraw.Draw(tlo)
+    linia_podzialu_x = okladka_x - 60 # Oś, do której wyrównujemy prawą stronę tekstu i logo
+    
     y_logo_dol = 250 
     
     if os.path.exists("logo_cnw.png"):
         logo = Image.open("logo_cnw.png").convert("RGBA")
-        logo_szer = 500 
+        logo_szer = 500 # Powiększone logo
         logo_prop = logo_szer / logo.width
         logo_wys = int(logo.height * logo_prop)
         logo = logo.resize((logo_szer, logo_wys), Image.Resampling.LANCZOS)
@@ -100,14 +92,16 @@ def generuj_cover_fb(okladka_plik, miesiac_rok, styl_tla, kolor_tla="#EACDC7"):
         logo_y = y_logo_dol - logo_wys
         tlo.paste(logo, (logo_x, logo_y), logo)
 
+    # 4. RYSOWANIE TEKSTÓW (Prawidłowe czcionki i rozmiary)
     try:
         font_light = ImageFont.truetype("Montserrat-Light.ttf", 40)
         font_bold = ImageFont.truetype("Montserrat-Bold.ttf", 52)
-    except Exception:
+    except Exception as e:
+        print("Używam czcionki awaryjnej. Błąd:", e)
         font_light = ImageFont.load_default()
         font_bold = ImageFont.load_default()
 
-    kolor_tekstu = (35, 35, 35) 
+    kolor_tekstu = (35, 35, 35) # Ciemny grafit
     tekst_1 = "Najnowsze wydanie już dostępne"
     tekst_2 = miesiac_rok.upper()
     
@@ -115,89 +109,44 @@ def generuj_cover_fb(okladka_plik, miesiac_rok, styl_tla, kolor_tla="#EACDC7"):
     szer_t2 = font_bold.getlength(tekst_2) if hasattr(font_bold, 'getlength') else font_bold.getbbox(tekst_2)[2]
     
     y_tekst = y_logo_dol + 30
-    
-    with Pilmoji(tlo) as pilmoji:
-        pilmoji.text((linia_podzialu_x - szer_t1, y_tekst), tekst_1, fill=kolor_tekstu, font=font_light)
-        y_tekst += 60
-        pilmoji.text((linia_podzialu_x - szer_t2, y_tekst), tekst_2, fill=kolor_tekstu, font=font_bold)
+    draw.text((linia_podzialu_x - szer_t1, y_tekst), tekst_1, fill=kolor_tekstu, font=font_light)
+    y_tekst += 60
+    draw.text((linia_podzialu_x - szer_t2, y_tekst), tekst_2, fill=kolor_tekstu, font=font_bold)
 
+    # Naklejamy okładkę na końcu
     tlo.paste(okladka_z_cieniem, (wklej_x, wklej_y), okladka_z_cieniem)
 
     return tlo
 
 # ==========================================
-# INTERFEJS UŻYTKOWNIKA STREAMLIT
+# BLOK STARTOWY (Uruchamia się po wciśnięciu RUN)
 # ==========================================
-st.set_page_config(page_title="Generator Covera FB", page_icon="🖼️", layout="centered")
-pobierz_czcionki()
-
-st.title("🖼️ Profesjonalny Generator Coverów FB")
-st.write("Wgraj okładkę, wpisz miesiąc i odbierz automatycznie oba warianty tła strony!")
-
-if 'covers_generated' not in st.session_state:
-    st.session_state.covers_generated = False
-
-with st.container():
-    plik_okladki = st.file_uploader("Wgraj plik nowej okładki (PNG/JPG):", type=['png', 'jpg', 'jpeg'])
+if __name__ == "__main__":
+    pobierz_czcionki()
     
-    # INTELIGENTNY WYBÓR KOLORU:
-    domyslny_kolor = "#F1DEDC" # Awaryjnie zostawiamy różowy
-    if plik_okladki:
-        # Wczytujemy z pamięci do PIL, żeby odczytać dominujący kolor
-        img_temp = Image.open(plik_okladki)
-        domyslny_kolor = wyciagnij_dominujacy_kolor(img_temp)
-        # Bardzo ważne: po przeczytaniu pliku przez PIL, trzeba cofnąć go na początek, 
-        # inaczej główny silnik wywaliłby błąd "plik jest pusty"!
-        plik_okladki.seek(0) 
-
-    miesiac_input = st.text_input("Wpisz miesiąc i rok wydania:", value="MAJ 2026 🔥")
+    # PARAMETRY DO TESTÓW:
+    nazwa_pliku_okladki = "okladka.jpg" 
+    jaki_miesiac = "MAJ 2026"
+    kolor_rozowy = "#F1DEDC" # Dopasowany do Twojego wzoru
     
-    # Kolor startuje jako ten pobrany z okładki (ale nadal możesz go ręcznie skorygować!)
-    kolor_wybrany = st.color_picker("Odcień dla wersji jednolitej (dopasowany automatycznie):", domyslny_kolor)
-
-    if st.button("🚀 Wygeneruj Oba Warianty", type="primary"):
-        if plik_okladki and miesiac_input:
-            with st.spinner("Składam grafiki, renderuję cienie i napisy..."):
-                
-                img_jednolity = generuj_cover_fb(plik_okladki, miesiac_input, "Jednolity", kolor_wybrany)
-                img_rozmyty = generuj_cover_fb(plik_okladki, miesiac_input, "Rozmyty")
-                
-                buf1 = BytesIO()
-                img_jednolity.save(buf1, format="JPEG", quality=100)
-                st.session_state.bytes_jednolity = buf1.getvalue()
-                
-                buf2 = BytesIO()
-                img_rozmyty.save(buf2, format="JPEG", quality=100)
-                st.session_state.bytes_rozmyty = buf2.getvalue()
-                
-                st.session_state.nazwa_pliku_baza = miesiac_input.replace(" ", "_").strip()
-                st.session_state.covers_generated = True
-        else:
-            st.warning("Upewnij się, że wgrałeś plik okładki oraz wpisałeś tekst!")
-
-# WYŚWIETLANIE W ZAKŁADKACH (TABS)
-if st.session_state.covers_generated:
-    st.markdown("---")
-    st.subheader("📥 Wybierz i pobierz wersję dla siebie:")
+    print("Rozpoczynam generowanie grafik...")
     
-    tab1, tab2 = st.tabs(["🎨 Wersja z jednolitym tłem", "✨ Wersja z rozmytym tłem"])
-    
-    with tab1:
-        st.image(st.session_state.bytes_jednolity, use_container_width=True)
-        st.download_button(
-            label="📥 Pobierz Wersję Jednolitą",
-            data=st.session_state.bytes_jednolity,
-            file_name=f"cover_jednolity_{st.session_state.nazwa_pliku_baza}.jpg",
-            mime="image/jpeg",
-            width="stretch"
-        )
+    if os.path.exists(nazwa_pliku_okladki):
+        # Generujemy od razu OBA warianty
+        wersja_jednolita = generuj_cover_fb(nazwa_pliku_okladki, jaki_miesiac, "Jednolity", kolor_rozowy)
+        wersja_rozmyta = generuj_cover_fb(nazwa_pliku_okladki, jaki_miesiac, "Rozmyty")
         
-    with tab2:
-        st.image(st.session_state.bytes_rozmyty, use_container_width=True)
-        st.download_button(
-            label="📥 Pobierz Wersję Rozmytą",
-            data=st.session_state.bytes_rozmyty,
-            file_name=f"cover_rozmyty_{st.session_state.nazwa_pliku_baza}.jpg",
-            mime="image/jpeg",
-            width="stretch"
-        )
+        # Zapisujemy pliki
+        nazwa_1 = "COVER_1_JEDNOLITY.jpg"
+        nazwa_2 = "COVER_2_ROZMYTY.jpg"
+        
+        wersja_jednolita.save(nazwa_1, quality=100)
+        wersja_rozmyta.save(nazwa_2, quality=100)
+        
+        # Otwieramy podgląd obu plików
+        wersja_jednolita.show()
+        wersja_rozmyta.show()
+        
+        print(f"✅ Sukces! Wygenerowano i otwarto dwie wersje covera.")
+    else:
+        print(f"❌ BŁĄD: Nie znalazłem pliku '{nazwa_pliku_okladki}'. Upewnij się, że jest w tym samym folderze.")
