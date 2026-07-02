@@ -10,7 +10,7 @@ from pilmoji import Pilmoji
 ssl._create_default_https_context = ssl._create_unverified_context
 
 # ==========================================
-# KONFIGURACJA I POBIERANIE CZCIONEK
+# KONFIGURACJA I INTELIGENTNE FUNKCJE
 # ==========================================
 def pobierz_czcionki():
     czcionki = {
@@ -24,8 +24,21 @@ def pobierz_czcionki():
             except Exception:
                 pass
 
+def wyciagnij_dominujacy_kolor(obrazek):
+    """Inteligentnie pobiera najpopularniejszy kolor z wgranej okładki."""
+    # Konwertujemy na format z limitowaną paletą (np. do 10 bazowych kolorów)
+    # To sprawia, że ignorujemy pojedyncze piksele, a wyciągamy spójną "masę"
+    img = obrazek.convert("P", palette=Image.ADAPTIVE, colors=10)
+    img = img.convert("RGB")
+    
+    # Pobieramy listę wszystkich kolorów i sortujemy
+    colors = img.getcolors(100000)
+    najczestszy = max(colors, key=lambda item: item[0])[1]
+    
+    # Konwertujemy RGB na format HEX (np. #A1B2C3), którego wymaga Streamlit
+    return '#{:02x}{:02x}{:02x}'.format(najczestszy[0], najczestszy[1], najczestszy[2]).upper()
+
 def generuj_cien(obrazek, rozrost=50, rozmycie=35, offset_y=15):
-    """Generuje realistyczny, miękki cień pod okładką."""
     szerokosc = obrazek.width + rozrost * 2
     wysokosc = obrazek.height + rozrost * 2
     cien = Image.new('RGBA', (szerokosc, wysokosc), (0, 0, 0, 0))
@@ -45,7 +58,6 @@ def generuj_cien(obrazek, rozrost=50, rozmycie=35, offset_y=15):
 def generuj_cover_fb(okladka_plik, miesiac_rok, styl_tla, kolor_tla="#EACDC7"):
     SZEROKOSC, WYSOKOSC = 1640, 624 
     
-    # 1. PRZYGOTOWANIE TŁA
     okladka_img = Image.open(okladka_plik).convert("RGBA")
     
     if styl_tla == "Jednolity":
@@ -62,7 +74,6 @@ def generuj_cover_fb(okladka_plik, miesiac_rok, styl_tla, kolor_tla="#EACDC7"):
         biala_nakladka = Image.new('RGBA', (SZEROKOSC, WYSOKOSC), (255, 255, 255, 180))
         tlo = Image.alpha_composite(tlo_rozmyte.convert('RGBA'), biala_nakladka).convert('RGB')
 
-    # 2. PRZYGOTOWANIE OKŁADKI
     docelowa_wys_okladki = 540
     proporcja = docelowa_wys_okladki / okladka_img.height
     docelowa_szer_okladki = int(okladka_img.width * proporcja)
@@ -75,7 +86,6 @@ def generuj_cover_fb(okladka_plik, miesiac_rok, styl_tla, kolor_tla="#EACDC7"):
     wklej_x = okladka_x - 50 
     wklej_y = ((WYSOKOSC - docelowa_wys_okladki) // 2) - 50
     
-    # 3. WGRYWANIE LOGO
     linia_podzialu_x = okladka_x - 60 
     y_logo_dol = 250 
     
@@ -90,7 +100,6 @@ def generuj_cover_fb(okladka_plik, miesiac_rok, styl_tla, kolor_tla="#EACDC7"):
         logo_y = y_logo_dol - logo_wys
         tlo.paste(logo, (logo_x, logo_y), logo)
 
-    # 4. RYSOWANIE TEKSTÓW Z OBSŁUGĄ EMOJI
     try:
         font_light = ImageFont.truetype("Montserrat-Light.ttf", 40)
         font_bold = ImageFont.truetype("Montserrat-Bold.ttf", 52)
@@ -112,7 +121,6 @@ def generuj_cover_fb(okladka_plik, miesiac_rok, styl_tla, kolor_tla="#EACDC7"):
         y_tekst += 60
         pilmoji.text((linia_podzialu_x - szer_t2, y_tekst), tekst_2, fill=kolor_tekstu, font=font_bold)
 
-    # Naklejamy okładkę z cieniem
     tlo.paste(okladka_z_cieniem, (wklej_x, wklej_y), okladka_z_cieniem)
 
     return tlo
@@ -131,18 +139,29 @@ if 'covers_generated' not in st.session_state:
 
 with st.container():
     plik_okladki = st.file_uploader("Wgraj plik nowej okładki (PNG/JPG):", type=['png', 'jpg', 'jpeg'])
+    
+    # INTELIGENTNY WYBÓR KOLORU:
+    domyslny_kolor = "#F1DEDC" # Awaryjnie zostawiamy różowy
+    if plik_okladki:
+        # Wczytujemy z pamięci do PIL, żeby odczytać dominujący kolor
+        img_temp = Image.open(plik_okladki)
+        domyslny_kolor = wyciagnij_dominujacy_kolor(img_temp)
+        # Bardzo ważne: po przeczytaniu pliku przez PIL, trzeba cofnąć go na początek, 
+        # inaczej główny silnik wywaliłby błąd "plik jest pusty"!
+        plik_okladki.seek(0) 
+
     miesiac_input = st.text_input("Wpisz miesiąc i rok wydania:", value="MAJ 2026 🔥")
-    kolor_wybrany = st.color_picker("Wybierz odcień dla wersji jednolitej (domyślnie pastelowy róż):", "#F1DEDC")
+    
+    # Kolor startuje jako ten pobrany z okładki (ale nadal możesz go ręcznie skorygować!)
+    kolor_wybrany = st.color_picker("Odcień dla wersji jednolitej (dopasowany automatycznie):", domyslny_kolor)
 
     if st.button("🚀 Wygeneruj Oba Warianty", type="primary"):
         if plik_okladki and miesiac_input:
             with st.spinner("Składam grafiki, renderuję cienie i napisy..."):
                 
-                # Generujemy obie wersje na raz i trzymamy w pamięci podręcznej
                 img_jednolity = generuj_cover_fb(plik_okladki, miesiac_input, "Jednolity", kolor_wybrany)
                 img_rozmyty = generuj_cover_fb(plik_okladki, miesiac_input, "Rozmyty")
                 
-                # Konwersja na bajty do pobrania
                 buf1 = BytesIO()
                 img_jednolity.save(buf1, format="JPEG", quality=100)
                 st.session_state.bytes_jednolity = buf1.getvalue()
@@ -161,7 +180,7 @@ if st.session_state.covers_generated:
     st.markdown("---")
     st.subheader("📥 Wybierz i pobierz wersję dla siebie:")
     
-    tab1, tab2 = st.tabs(["💗 Wersja z jednolitym tłem", "✨ Wersja z rozmytym tłem"])
+    tab1, tab2 = st.tabs(["🎨 Wersja z jednolitym tłem", "✨ Wersja z rozmytym tłem"])
     
     with tab1:
         st.image(st.session_state.bytes_jednolity, use_container_width=True)
