@@ -157,7 +157,7 @@ with st.container():
         domyslny_kolor = wyciagnij_dominujacy_kolor(img_temp)
         plik_okladki.seek(0) 
 
-    miesiac_input = st.text_input("Wpisz miesiąc i rok wydania:", value="MAJ 2026 🔥")
+    miesiac_input = st.text_input("Wpisz miesiąc i rok wydania:", value="LIPIEC-SIERPIEŃ 2026")
     kolor_wybrany = st.color_picker("Odcień tła (zabezpieczony przed zbyt ciemnym kolorem):", domyslny_kolor)
 
     if st.button("🚀 Wygeneruj Oba Warianty", type="primary"):
